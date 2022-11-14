@@ -271,6 +271,15 @@ def xywh2xyxy(x):
     y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
     return y
 
+def batched_xywh2xyxy(x):
+    # Convert batched nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
+    y[..., 1] = x[..., 1] - x[..., 3] / 2  # top left y
+    y[..., 2] = x[..., 0] + x[..., 2] / 2  # bottom right x
+    y[..., 3] = x[..., 1] + x[..., 3] / 2  # bottom right y
+    return y
+
 
 def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):
     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
@@ -324,20 +333,27 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     else:
         gain = ratio_pad[0][0]
         pad = ratio_pad[1]
-
-    coords[:, [0, 2]] -= pad[0]  # x padding
-    coords[:, [1, 3]] -= pad[1]  # y padding
+    pad = torch.tensor(pad).to(coords.device)
+    coords[:, 0] -= pad[0]  # x padding
+    coords[:, 2] -= pad[0]  # x padding
+    coords[:, 3] -= pad[1]  # y padding
+    coords[:, 1] -= pad[1]  # y padding        
     coords[:, :4] /= gain
     clip_coords(coords, img0_shape)
+    print(1)
     return coords
 
 
-def clip_coords(boxes, img_shape):
+def clip_coords(boxes, shape):
     # Clip bounding xyxy bounding boxes to image shape (height, width)
-    boxes[:, 0].clamp_(0, img_shape[1])  # x1
-    boxes[:, 1].clamp_(0, img_shape[0])  # y1
-    boxes[:, 2].clamp_(0, img_shape[1])  # x2
-    boxes[:, 3].clamp_(0, img_shape[0])  # y2
+    if isinstance(boxes, torch.Tensor):  # faster individually
+        boxes[:, 0].clamp_(0, shape[1])  # x1
+        boxes[:, 1].clamp_(0, shape[0])  # y1
+        boxes[:, 2].clamp_(0, shape[1])  # x2
+        boxes[:, 3].clamp_(0, shape[0])  # y2
+    else:  # np.array (faster grouped)
+        boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, shape[1])  # x1, x2
+        boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, shape[0])  # y1, y2
 
 
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
@@ -602,6 +618,54 @@ def box_diou(box1, box2, eps: float = 1e-7):
     # The distance IoU is the IoU penalized by a normalized
     # distance between boxes' centers squared.
     return iou - (centers_distance_squared / diagonal_distance_squared)
+
+
+def batched_non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
+                        labels=(), max_det=300):
+    """Runs Non-Maximum Suppression (NMS) on inference results
+    Params:
+        prediction : (batch, num_bboxes, 5+num_classes) 
+    Returns:
+         list of detections, on (n,6) tensor per image [xyxy, conf, cls]
+    """
+    try:
+        num_cls = prediction.shape[2] - 5  # number of classes
+        x = prediction
+    except:
+        num_cls = prediction[0].shape[2] - 5  # number of classes
+        x = prediction[0]
+
+    # Checks
+    assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
+    assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
+    assert multi_label is True
+    assert agnostic is False
+    assert len(labels) == 0
+
+    # Settings
+    min_wh, max_wh = 2, 7680  # (pixels) minimum and maximum box width and height
+    max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
+    
+
+    # Filter by class
+    if classes is not None:
+        x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
+
+    # Compute conf
+    x[:, :, 5:] *= x[:, :, 4, None] # conf = obj_conf * cls_conf
+
+    
+    # Box (center x, center y, width, height) to (x1, y1, x2, y2)
+    x[:, :, :4] = batched_xywh2xyxy(x[:, :, :4])
+    bboxes = x[:, :, :4]
+    scores = x[:, :, 5:]
+    bboxes, scores, labels, output_lengths  = torch.moreh_ops.batched_ssd_nms(bboxes, scores, iou_thres, conf_thres, max_det)
+
+    # output : (B, N, 6)
+    # detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
+    output = torch.cat([bboxes, scores.unsqueeze(2), labels.unsqueeze(2)], dim=2)
+
+    return output, output_lengths
 
 
 def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,

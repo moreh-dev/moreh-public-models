@@ -176,7 +176,7 @@ def train(hyp, opt, device, tb_writer=None):
                 pg0.append(v.rbr_dense.weight_rbr_gconv_pw)
             if hasattr(v.rbr_dense, 'vector'):   
                 pg0.append(v.rbr_dense.vector)
-
+    print('modul clear')
     if opt.adam:
         optimizer = optim.Adam(pg0, lr=hyp['lr0'], betas=(hyp['momentum'], 0.999))  # adjust beta1 to momentum
     else:
@@ -240,7 +240,7 @@ def train(hyp, opt, device, tb_writer=None):
     if opt.sync_bn and cuda and rank != -1:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
         logger.info('Using SyncBatchNorm()')
-
+    
     # Trainloader
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
                                             hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
@@ -249,7 +249,7 @@ def train(hyp, opt, device, tb_writer=None):
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
     nb = len(dataloader)  # number of batches
     assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, opt.data, nc - 1)
-
+    print('dataloader clear')
     # Process 0
     if rank in [-1, 0]:
         testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
@@ -288,7 +288,7 @@ def train(hyp, opt, device, tb_writer=None):
     model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
-
+    print('mocdel clear')
     # Start training
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
@@ -304,6 +304,7 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
     torch.save(model, wdir / 'init.pt')
+    print('train start')
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
 
@@ -333,70 +334,70 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
-        for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
-            ni = i + nb * epoch  # number integrated batches (since train start)
-            imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        # for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
+        #     ni = i + nb * epoch  # number integrated batches (since train start)
+        #     imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
-            # Warmup
-            if ni <= nw:
-                xi = [0, nw]  # x interp
-                # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
-                for j, x in enumerate(optimizer.param_groups):
-                    # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                    x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
-                    if 'momentum' in x:
-                        x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
+        #     # Warmup
+        #     if ni <= nw:
+        #         xi = [0, nw]  # x interp
+        #         # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
+        #         accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
+        #         for j, x in enumerate(optimizer.param_groups):
+        #             # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+        #             x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+        #             if 'momentum' in x:
+        #                 x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
-            # Multi-scale
-            if opt.multi_scale:
-                sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
-                sf = sz / max(imgs.shape[2:])  # scale factor
-                if sf != 1:
-                    ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
-                    imgs = F.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
+        #     # Multi-scale
+        #     if opt.multi_scale:
+        #         sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
+        #         sf = sz / max(imgs.shape[2:])  # scale factor
+        #         if sf != 1:
+        #             ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
+        #             imgs = F.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
+        #     print('foward start')
+        #     # Forward
+        #     with amp.autocast(enabled=cuda):
+        #         pred = model(imgs)  # forward
+        #         if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
+        #             loss, loss_items = compute_loss(pred, targets)  # loss scaled by batch_size
+        #         else:
+        #             loss, loss_items = compute_loss(pred, targets)  # loss scaled by batch_size
+        #         if rank != -1:
+        #             loss *= opt.world_size  # gradient averaged between devices in DDP mode
+        #         if opt.quad:
+        #             loss *= 4.
 
-            # Forward
-            with amp.autocast(enabled=cuda):
-                pred = model(imgs)  # forward
-                if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
-                    loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
-                else:
-                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
-                if rank != -1:
-                    loss *= opt.world_size  # gradient averaged between devices in DDP mode
-                if opt.quad:
-                    loss *= 4.
+        #     # Backward
+        #     scaler.scale(loss).backward()
 
-            # Backward
-            scaler.scale(loss).backward()
+        #     # Optimize
+        #     if ni % accumulate == 0:
+        #         scaler.step(optimizer)  # optimizer.step
+        #         scaler.update()
+        #         optimizer.zero_grad()
+        #         if ema:
+        #             ema.update(model)
 
-            # Optimize
-            if ni % accumulate == 0:
-                scaler.step(optimizer)  # optimizer.step
-                scaler.update()
-                optimizer.zero_grad()
-                if ema:
-                    ema.update(model)
+        #     # Print
+        #     if rank in [-1, 0]:
+        #         mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+        #         mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+        #         s = ('%10s' * 2 + '%10.4g' * 6) % (
+        #             '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
+        #         pbar.set_description(s)
 
-            # Print
-            if rank in [-1, 0]:
-                mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 6) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
-                pbar.set_description(s)
-
-                # Plot
-                if plots and ni < 10:
-                    f = save_dir / f'train_batch{ni}.jpg'  # filename
-                    Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
-                    # if tb_writer:
-                    #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
-                    #     tb_writer.add_graph(torch.jit.trace(model, imgs, strict=False), [])  # add model graph
-                elif plots and ni == 10 and wandb_logger.wandb:
-                    wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
-                                                  save_dir.glob('train*.jpg') if x.exists()]})
+        #         # Plot
+        #         if plots and ni < 10:
+        #             f = save_dir / f'train_batch{ni}.jpg'  # filename
+        #             Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
+        #             # if tb_writer:
+        #             #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
+        #             #     tb_writer.add_graph(torch.jit.trace(model, imgs, strict=False), [])  # add model graph
+        #         elif plots and ni == 10 and wandb_logger.wandb:
+        #             wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
+        #                                           save_dir.glob('train*.jpg') if x.exists()]})
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -524,7 +525,7 @@ def train(hyp, opt, device, tb_writer=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolo7.pt', help='initial weights path')
+    parser.add_argument('--weights', type=str, default='', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.p5.yaml', help='hyperparameters path')

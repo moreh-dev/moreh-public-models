@@ -527,48 +527,59 @@ class Model(nn.Module):
             self.yaml['anchors'] = round(anchors)  # override yaml value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
         self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
+        self.inplace = self.yaml.get('inplace', True)
         # print([x.shape for x in self.forward(torch.zeros(1, ch, 64, 64))])
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
         if isinstance(m, Detect):
             s = 256  # 2x min stride
+            m.inplace = self.inplace
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
-            check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
+            m.anchors_cpu = m.anchors.cpu()
+            check_anchor_order(m)
             self.stride = m.stride
             self._initialize_biases()  # only run once
             # print('Strides: %s' % m.stride.tolist())
         if isinstance(m, IDetect):
             s = 256  # 2x min stride
+            m.inplace = self.inplace
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
-            check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
+            m.anchors_cpu = m.anchors.cpu()
+            check_anchor_order(m)
             self.stride = m.stride
             self._initialize_biases()  # only run once
             # print('Strides: %s' % m.stride.tolist())
         if isinstance(m, IAuxDetect):
             s = 256  # 2x min stride
+            m.inplace = self.inplace
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))[:4]])  # forward
             #print(m.stride)
-            check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
+            m.anchors_cpu = m.anchors.cpu()
+            check_anchor_order(m)
             self.stride = m.stride
             self._initialize_aux_biases()  # only run once
             # print('Strides: %s' % m.stride.tolist())
         if isinstance(m, IBin):
             s = 256  # 2x min stride
+            m.inplace = self.inplace
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
-            check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
+            m.anchors_cpu = m.anchors.cpu()
+            check_anchor_order(m)
             self.stride = m.stride
             self._initialize_biases_bin()  # only run once
             # print('Strides: %s' % m.stride.tolist())
         if isinstance(m, IKeypoint):
             s = 256  # 2x min stride
+            m.inplace = self.inplace
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
-            check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
+            m.anchors_cpu = m.anchors.cpu()
+            check_anchor_order(m)
             self.stride = m.stride
             self._initialize_biases_kpt()  # only run once
             # print('Strides: %s' % m.stride.tolist())
