@@ -340,7 +340,6 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     coords[:, 1] -= pad[1]  # y padding        
     coords[:, :4] /= gain
     clip_coords(coords, img0_shape)
-    print(1)
     return coords
 
 

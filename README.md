@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Official YOLOv7
 
 Implementation of paper - [YOLOv7: Trainable bag-of-freebies sets new state-of-the-art for real-time object detectors](https://arxiv.org/abs/2207.02696)
@@ -257,3 +258,6 @@ Yolov7-semantic & YOLOv7-panoptic & YOLOv7-caption
 * [https://github.com/TexasInstruments/edgeai-yolov5/tree/yolo-pose](https://github.com/TexasInstruments/edgeai-yolov5/tree/yolo-pose)
 
 </details>
+=======
+# moreh-public-models
+>>>>>>> 712d4be7892c8adb40a4a652b531c5b6e2f8b155
