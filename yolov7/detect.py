@@ -28,7 +28,7 @@ def detect(save_img=False):
     # Initialize
     set_logging()
     device = select_device(opt.device)
-    half = device.type != 'cpu'  # half precision only supported on CUDA
+    # half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
     model = attempt_load(weights, map_location=device)  # load FP32 model
@@ -38,9 +38,9 @@ def detect(save_img=False):
     if trace:
         model = TracedModel(model, device, opt.img_size)
 
-    if half:
-        model.half()  # to FP16
-    print(1)
+    # if half:
+    #     model.half()  # to FP16
+    
     # Second-stage classifier
     classify = False
     if classify:
@@ -55,11 +55,11 @@ def detect(save_img=False):
         dataset = LoadStreams(source, img_size=imgsz, stride=stride)
     else:
         dataset = LoadImages(source, img_size=imgsz, stride=stride)
-    print(2)
+    
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
-    print(3)
+    
     # Run inference
     if device.type != 'cpu':
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
@@ -69,34 +69,34 @@ def detect(save_img=False):
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
         img = torch.from_numpy(img).to(device)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img = img.float()
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
 
-        # Warmup
-        if device.type != 'cpu' and (old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
-            old_img_b = img.shape[0]
-            old_img_h = img.shape[2]
-            old_img_w = img.shape[3]
-            for i in range(3):
-                model(img, augment=opt.augment)[0]
-        print(4)
+        # # Warmup
+        # if device.type != 'cpu' and (old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
+        #     old_img_b = img.shape[0]
+        #     old_img_h = img.shape[2]
+        #     old_img_w = img.shape[3]
+        #     for i in range(3):
+        #         model(img, augment=opt.augment)
+        
         # Inference
-        #t1 = time_synchronized()
-        pred = model(img, augment=opt.augment)[0]
-        #t2 = time_synchronized()
-
+        t1 = time.perf_counter()
+        pred = model(img)
+        t2 = time.perf_counter()
+        
         # Apply NMS
         pred, pred_length = batched_non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms, multi_label=True)
-        #t3 = time_synchronized()
-
+        t3 = time.perf_counter()
+        
         # Apply Classifier
-        if classify:
-            pred = apply_classifier(pred, modelc, img, im0s)
-            pred = pred.cpu()
-            pred_length = pred_length.cpu()
-        print(5)
+        # if classify:
+        #     pred = apply_classifier(pred, modelc, img, im0s)
+        pred = pred.cpu()
+        pred_length = pred_length.cpu()
+        
         # Process detections
         for i, det in enumerate(pred):  # detections per image
             det = det[:pred_length[i], :]
@@ -104,23 +104,22 @@ def detect(save_img=False):
                 p, s, im0, frame = path[i], '%g: ' % i, im0s[i].copy(), dataset.count
             else:
                 p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
-            print(6)
+            
             p = Path(p)  # to Path
             save_path = str(save_dir / p.name)  # img.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-            print(7)
+            line_thickness=3
+            
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-                print(7.5)
-                # Print results
+                
+                # # Print results
                 for c in det[:, -1].unique():
-                    print(7.6)
                     n = (det[:, -1] == c).sum()  # detections per class
-                    print(7.7)
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-                print(8)
+                
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
                     if save_txt:  # Write to file
@@ -128,12 +127,11 @@ def detect(save_img=False):
                         line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
                         with open(txt_path + '.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
-
+                    
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
 
-            # Print time (inference + NMS)
             print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
             # Stream results
