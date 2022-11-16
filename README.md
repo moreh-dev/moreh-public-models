@@ -1,3 +1,2 @@
-=======
 # moreh-public-models
 
