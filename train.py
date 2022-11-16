@@ -28,14 +28,149 @@ from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
-    check_requirements, print_mutation, set_logging, one_cycle, colorstr
+    check_requirements, print_mutation, set_logging, one_cycle, colorstr, batched_non_max_suppression, \
+    coco80_to_coco91_class, logging_helper, NMSOutput, compute_stats
 from utils.google_utils import attempt_download
+from utils.metrics import ConfusionMatrix, ap_per_class
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
 logger = logging.getLogger(__name__)
+
+@torch.no_grad()
+def evaluate(data,
+        weights=None,  # model.pt path(s)
+        batch_size=32,  # batch size
+        imgsz=640,  # inference size (pixels)
+        conf_thres=0.001,  # confidence threshold
+        iou_thres=0.6,  # NMS IoU threshold
+        task='val',  # train, val, test, speed or study
+        device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        workers=8,  # max dataloader workers (per RANK in DDP mode)
+        single_cls=False,  # treat as single-class dataset
+        augment=False,  # augmented inference
+        verbose=False,  # verbose output
+        save_txt=False,  # save results to *.txt
+        save_hybrid=False,  # save label+prediction hybrid results to *.txt
+        save_conf=False,  # save confidences in --save-txt labels
+        save_json=False,  # save a COCO-JSON results file
+        name='exp',  # save to project/name
+        exist_ok=False,  # existing project/name ok, do not increment
+        model=None,
+        dataloader=None,
+        save_dir=Path(''),
+        plots=False,
+        compute_loss=None,
+        log_interval=100,
+        end_iteration=-1, # for debugging purpose
+        ):
+    
+
+    # Initialize/load model and set device
+    device, pt, jit, engine = next(model.parameters()).device, True, False, False  # get model device, PyTorch model
+    
+    if not os.path.exists(save_dir / 'labels'):
+        os.makedirs(save_dir / 'labels')
+    
+    # Configure
+    model.eval()
+    is_coco = isinstance(data.get('val'), str) and data['val'].endswith('coco/val2017.txt')  # COCO dataset
+    nc = int(data['nc'])  # number of classes
+    iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
+    niou = iouv.numel()
+
+    seen = 0
+    confusion_matrix = ConfusionMatrix(nc=nc)
+    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
+    s = ('%20s' + '%11s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
+    dt, p, r, f1, mp, mr, map50, map = [0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    loss = torch.zeros(3, device=device)
+    jdict, stats, ap, ap_class = [], [], [], []
+    log_this_iter = logging_helper(len(dataloader), log_interval, end_iteration)
+    nms_output_list = []
+    start = time.perf_counter()
+    for batch_i, (im, targets, paths, shapes) in enumerate(dataloader, 1):
+        nms_output = NMSOutput()
+        nms_output.img = im
+        nms_output.paths = paths 
+        nms_output.shapes = shapes
+        nms_output.targets = targets
+        
+        im = im.to(device, non_blocking=True)
+        im = im.float()
+        im /= 255  # 0 - 255 to 0.0 - 1.0
+        nb, _, height, width = im.shape  # batch size, channels, height, width
+        
+        # Inference
+        out, train_out = model(im)  # inference, loss outputs
+
+        # Loss
+        if compute_loss:
+           loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
+
+        # NMS
+        lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
+
+        targets = targets.cuda()
+        targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+        #out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=False)
+        output, output_length = batched_non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
+        nms_output.output = output
+        nms_output.output_length = output_length
+        nms_output_list.append(nms_output)
+
+
+        do_log, processed_iters = log_this_iter(batch_i)
+        if do_log:
+            # Append statistics (correct, conf, pcls, tcls)
+            stats.extend(compute_stats(nms_output_list))
+            nms_output_list = []
+
+            duration = time.perf_counter() - start
+            iters_left = len(dataloader) - batch_i 
+            iters_per_sec = processed_iters / duration
+            images_per_sec = iters_per_sec * batch_size
+
+            logger.info(
+                f'EVAL_STEP | '
+                f'Iteration: {batch_i}/{len(dataloader)} | '
+                f'Throughput: {images_per_sec:8.3f} images/s | '
+                f'Duration: {duration:>5.3f} s | '
+                f'Estimated time left: {iters_left / iters_per_sec:.3f} s'
+            )
+            start = time.perf_counter()
+
+    # Compute metrics
+    stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+    if len(stats) and stats[0].any():
+        tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
+        ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
+        mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
+        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
+    else:
+        nt = torch.zeros(1)
+        
+        
+    # Print results
+    pf = '%20s' + '%12i' * 2 + '%12.3g' * 4  # print format
+    print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+
+    # Print results per class
+    if (verbose or (nc < 50)) and nc > 1 and len(stats):
+        for i, c in enumerate(ap_class):
+            print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+
+    # Return results
+    maps = np.zeros(nc) + map
+    for i, c in enumerate(ap_class):
+        maps[c] = ap[i]
+    return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, _
+
+
+
 
 
 def train(hyp, opt, device, tb_writer=None):
@@ -252,8 +387,8 @@ def train(hyp, opt, device, tb_writer=None):
     print('dataloader clear')
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
-                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+        testloader = create_dataloader(test_path, imgsz_test, batch_size, gs, opt,  # testloader
+                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=rank,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
 
@@ -334,70 +469,70 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
-        # for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
-        #     ni = i + nb * epoch  # number integrated batches (since train start)
-        #     imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
+            ni = i + nb * epoch  # number integrated batches (since train start)
+            imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
-        #     # Warmup
-        #     if ni <= nw:
-        #         xi = [0, nw]  # x interp
-        #         # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-        #         accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
-        #         for j, x in enumerate(optimizer.param_groups):
-        #             # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-        #             x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
-        #             if 'momentum' in x:
-        #                 x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
+            # Warmup
+            if ni <= nw:
+                xi = [0, nw]  # x interp
+                # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
+                accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
+                for j, x in enumerate(optimizer.param_groups):
+                    # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                    x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                    if 'momentum' in x:
+                        x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
-        #     # Multi-scale
-        #     if opt.multi_scale:
-        #         sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
-        #         sf = sz / max(imgs.shape[2:])  # scale factor
-        #         if sf != 1:
-        #             ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
-        #             imgs = F.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
-        #     print('foward start')
-        #     # Forward
-        #     with amp.autocast(enabled=cuda):
-        #         pred = model(imgs)  # forward
-        #         if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
-        #             loss, loss_items = compute_loss(pred, targets)  # loss scaled by batch_size
-        #         else:
-        #             loss, loss_items = compute_loss(pred, targets)  # loss scaled by batch_size
-        #         if rank != -1:
-        #             loss *= opt.world_size  # gradient averaged between devices in DDP mode
-        #         if opt.quad:
-        #             loss *= 4.
+            # Multi-scale
+            if opt.multi_scale:
+                sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
+                sf = sz / max(imgs.shape[2:])  # scale factor
+                if sf != 1:
+                    ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
+                    imgs = F.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
+            print('foward start')
+            # Forward
+            with amp.autocast(enabled=cuda):
+                pred = model(imgs)  # forward
+                if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
+                    loss, loss_items = compute_loss(pred, targets)  # loss scaled by batch_size
+                else:
+                    loss, loss_items = compute_loss(pred, targets)  # loss scaled by batch_size
+                if rank != -1:
+                    loss *= opt.world_size  # gradient averaged between devices in DDP mode
+                if opt.quad:
+                    loss *= 4.
 
-        #     # Backward
-        #     scaler.scale(loss).backward()
+            # Backward
+            scaler.scale(loss).backward()
 
-        #     # Optimize
-        #     if ni % accumulate == 0:
-        #         scaler.step(optimizer)  # optimizer.step
-        #         scaler.update()
-        #         optimizer.zero_grad()
-        #         if ema:
-        #             ema.update(model)
+            # Optimize
+            if ni % accumulate == 0:
+                scaler.step(optimizer)  # optimizer.step
+                scaler.update()
+                optimizer.zero_grad()
+                if ema:
+                    ema.update(model)
 
-        #     # Print
-        #     if rank in [-1, 0]:
-        #         mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-        #         mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-        #         s = ('%10s' * 2 + '%10.4g' * 6) % (
-        #             '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
-        #         pbar.set_description(s)
+            # Print
+            if rank in [-1, 0]:
+                mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+                mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+                s = ('%10s' * 2 + '%10.4g' * 6) % (
+                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
+                pbar.set_description(s)
 
-        #         # Plot
-        #         if plots and ni < 10:
-        #             f = save_dir / f'train_batch{ni}.jpg'  # filename
-        #             Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
-        #             # if tb_writer:
-        #             #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
-        #             #     tb_writer.add_graph(torch.jit.trace(model, imgs, strict=False), [])  # add model graph
-        #         elif plots and ni == 10 and wandb_logger.wandb:
-        #             wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
-        #                                           save_dir.glob('train*.jpg') if x.exists()]})
+                # Plot
+                if plots and ni < 10:
+                    f = save_dir / f'train_batch{ni}.jpg'  # filename
+                    Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
+                    # if tb_writer:
+                    #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
+                    #     tb_writer.add_graph(torch.jit.trace(model, imgs, strict=False), [])  # add model graph
+                elif plots and ni == 10 and wandb_logger.wandb:
+                    wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
+                                                  save_dir.glob('train*.jpg') if x.exists()]})
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -413,19 +548,14 @@ def train(hyp, opt, device, tb_writer=None):
             final_epoch = epoch + 1 == epochs
             if not opt.notest or final_epoch:  # Calculate mAP
                 wandb_logger.current_epoch = epoch + 1
-                results, maps, times = test.test(data_dict,
-                                                 batch_size=batch_size * 2,
-                                                 imgsz=imgsz_test,
-                                                 model=ema.ema,
-                                                 single_cls=opt.single_cls,
-                                                 dataloader=testloader,
-                                                 save_dir=save_dir,
-                                                 verbose=nc < 50 and final_epoch,
-                                                 plots=plots and final_epoch,
-                                                 wandb_logger=wandb_logger,
-                                                 compute_loss=compute_loss,
-                                                 is_coco=is_coco)
-
+                results, maps, _ = evaluate(data_dict,
+                                            batch_size=batch_size,
+                                            imgsz=imgsz,
+                                            model=ema.ema,
+                                            dataloader=testloader,
+                                            compute_loss=compute_loss,
+                                            )
+            
             # Write
             with open(results_file, 'a') as f:
                 f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
@@ -492,18 +622,25 @@ def train(hyp, opt, device, tb_writer=None):
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
         if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
             for m in (last, best) if best.exists() else (last):  # speed, mAP tests
-                results, _, _ = test.test(opt.data,
-                                          batch_size=batch_size * 2,
-                                          imgsz=imgsz_test,
-                                          conf_thres=0.001,
-                                          iou_thres=0.7,
-                                          model=attempt_load(m, device).half(),
-                                          single_cls=opt.single_cls,
-                                          dataloader=testloader,
-                                          save_dir=save_dir,
-                                          save_json=True,
-                                          plots=False,
-                                          is_coco=is_coco)
+                # results, _, _ = test.test(opt.data,
+                #                           batch_size=batch_size,
+                #                           imgsz=imgsz_test,
+                #                           conf_thres=0.001,
+                #                           iou_thres=0.7,
+                #                           model=attempt_load(m, device).half(),
+                #                           single_cls=opt.single_cls,
+                #                           dataloader=testloader,
+                #                           save_dir=save_dir,
+                #                           save_json=True,
+                #                           plots=False,
+                #                           is_coco=is_coco)
+                results, _, _ = evaluate(data_dict,
+                                        batch_size=batch_size,
+                                        imgsz=imgsz,
+                                        model=attempt_load(m, device),
+                                        dataloader=testloader,
+                                        compute_loss=compute_loss,
+                                        )
 
         # Strip optimizers
         final = best if best.exists() else last  # final model
@@ -519,7 +656,7 @@ def train(hyp, opt, device, tb_writer=None):
         wandb_logger.finish_run()
     else:
         dist.destroy_process_group()
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
     return results
 
 
@@ -529,7 +666,7 @@ if __name__ == '__main__':
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.p5.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=300)
+    parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--rect', action='store_true', help='rectangular training')

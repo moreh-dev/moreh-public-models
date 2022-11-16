@@ -952,3 +952,132 @@ def increment_path(path, exist_ok=True, sep=''):
         i = [int(m.groups()[0]) for m in matches if m]  # indices
         n = max(i) + 1 if i else 2  # increment number
         return f"{path}{sep}{n}"  # update path
+
+def logging_helper(steps_per_epoch, log_interval, end_step=-1):
+    steps_per_epoch = steps_per_epoch
+    log_interval = log_interval
+    last_step = 0
+    end_step = end_step
+
+    def _log_this_step(step):
+        nonlocal steps_per_epoch, log_interval, last_step, end_step
+        assert step > 0, "step must start from 1."
+        last_step = 0 if last_step > step else last_step
+
+        if end_step > 0 and step > end_step:
+            exit()
+
+        steps_left = steps_per_epoch - step
+
+        do_log = step % log_interval == 0 \
+            or steps_left == 0 \
+            or step == int(log_interval * 0.1)
+
+        if do_log:
+            if step == int(log_interval * 0.1):
+                processed_steps = int(log_interval * 0.1)
+                last_step = step
+            elif step % log_interval == 0:
+                processed_steps = step - last_step
+                last_step = step
+            else:
+                processed_steps = (step - last_step) % log_interval
+        else:
+            processed_steps = None
+
+
+        return do_log, processed_steps
+
+    return _log_this_step
+
+class NMSOutput:
+    def __init__(self):
+        self.image = None
+        self.paths = None
+        self.shapes = None
+        self.targets = None
+        self.output = None
+        self.output_length = None
+
+    def to_cpu(self):
+        assert self.targets is not None
+        assert self.output is not None
+        assert self.output_length is not None
+        self.output = self.output.cpu()
+        self.output_length = self.output_length.cpu()
+        self.targets = self.targets.cpu()
+        return self
+    
+    
+
+def compute_stats(nms_output_list):
+    if len(nms_output_list) == 0:
+        return []
+    nms_output_list = [output.to_cpu() for output in nms_output_list]
+    iouv = torch.linspace(0.5, 0.95, 10)
+    num_iouv = iouv.numel()
+
+    stats = []
+
+    for nms_output in nms_output_list:
+        image = nms_output.img
+        batch, _, height, width = nms_output.img.shape
+        paths = nms_output.paths
+        shapes = nms_output.shapes
+        whwh = torch.tensor([width, height, width, height])
+        targets = nms_output.targets # (num_bboxes, 6) nx6(image_id, target_class, x, y, w, h)
+        output = nms_output.output # (batch, num_output==300, 6) [x,y,x,y, confidence(score), predicted_label]
+        output_length = nms_output.output_length # (batch)
+        output = [output[i, :output_length[i]] for i in range(output.shape[0])]
+
+        # Metrics
+        for i, pred in enumerate(output):
+            labels = targets[targets[:, 0] == i, 1:]
+            num_label = len(labels)
+            target_class = labels[:, 0].tolist() if num_label else []  # target class
+            _, shape = Path(paths[i]), shapes[i][0]
+
+            if len(pred) == 0:
+                if num_label:
+                    stats.append((torch.zeros(0, num_iouv, dtype=torch.bool), torch.Tensor(), torch.Tensor(), target_class))
+                continue
+
+            # Predictions
+            predn = pred.clone()
+            scale_coords(image[i].shape[1:], predn[:, :4], shape, shapes[i][1])  # native-space pred
+
+            # Evaluate
+            if num_label:
+                tbox = xywh2xyxy(labels[:, 1:5]) * whwh # target boxes
+                scale_coords(image[i].shape[1:], tbox, shape, shapes[i][1])  # native-space labels
+                labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
+                correct = process_batch(predn, labelsn, iouv)
+            else:
+                correct = torch.zeros(pred.shape[0], num_iouv, dtype=torch.bool)
+
+            # Append statistics (correct, conf, pcls, tcls)
+            confidence, predicted_class = pred[:, 4], pred[:, 5]
+            stats.append((correct, confidence, predicted_class, target_class))
+    return stats
+
+def process_batch(detections, labels, iouv):
+    """
+    Return correct predictions matrix. Both sets of boxes are in (x1, y1, x2, y2) format.
+    Arguments:
+        detections (Array[N, 6]), x1, y1, x2, y2, conf, class
+        labels (Array[M, 5]), class, x1, y1, x2, y2
+    Returns:
+        correct (Array[N, 10]), for 10 IoU levels
+    """
+    correct = torch.zeros(detections.shape[0], iouv.shape[0], dtype=torch.bool, device=iouv.device)
+    iou = box_iou(labels[:, 1:], detections[:, :4])
+    x = torch.where((iou >= iouv[0]) & (labels[:, 0:1] == detections[:, 5]))  # IoU above threshold and classes match
+    if x[0].shape[0]:
+        matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()  # [label, detection, iou]
+        if x[0].shape[0] > 1:
+            matches = matches[matches[:, 2].argsort()[::-1]]
+            matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+            matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+        matches = torch.Tensor(matches).to(iouv.device)
+        correct[matches[:, 1].long()] = matches[:, 2:3] >= iouv
+    return correct
