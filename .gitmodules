@@ -19,3 +19,6 @@
 [submodule "torch/torch_DLRM"]
 	path = torch/torch_DLRM
 	url = https://github.com/kimmorehvn/torch_DLRM.git
+[submodule "torch/torch_ACVNet"]
+	path = torch/torch_ACVNet
+	url = https://github.com/kimmorehvn/torch_ACVNet.git
