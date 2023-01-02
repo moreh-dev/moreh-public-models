@@ -4,3 +4,6 @@
 [submodule "torch/pytorch-CycleGAN-and-pix2pix"]
 	path = torch/pytorch-CycleGAN-and-pix2pix
 	url = https://github.com/kimmorehvn/pytorch-CycleGAN-and-pix2pix.git
+[submodule "torch/SSD_torch"]
+	path = torch/SSD_torch
+	url = https://github.com/kimmorehvn/SSD_torch.git
