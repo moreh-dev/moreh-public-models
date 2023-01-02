@@ -10,3 +10,6 @@
 [submodule "torch/torch_GLOW"]
 	path = torch/torch_GLOW
 	url = https://github.com/kimmorehvn/torch_GLOW.git
+[submodule "tf2/tf2_GLOW"]
+	path = tf2/tf2_GLOW
+	url = https://github.com/kimmorehvn/tf2_GLOW.git
