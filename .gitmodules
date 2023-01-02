@@ -13,3 +13,6 @@
 [submodule "tf2/tf2_GLOW"]
 	path = tf2/tf2_GLOW
 	url = https://github.com/kimmorehvn/tf2_GLOW.git
+[submodule "torch/torch_MPL"]
+	path = torch/torch_MPL
+	url = https://github.com/kimmorehvn/torch_MPL.git
