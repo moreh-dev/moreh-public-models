@@ -1,3 +1,6 @@
 [submodule "torch/maf_torch_dcgan"]
 	path = torch/maf_torch_dcgan
 	url = https://github.com/kimmorehvn/maf_torch_dcgan
+[submodule "torch/pytorch-CycleGAN-and-pix2pix"]
+	path = torch/pytorch-CycleGAN-and-pix2pix
+	url = https://github.com/kimmorehvn/pytorch-CycleGAN-and-pix2pix.git
