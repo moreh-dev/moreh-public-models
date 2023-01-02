@@ -22,3 +22,6 @@
 [submodule "torch/torch_ACVNet"]
 	path = torch/torch_ACVNet
 	url = https://github.com/kimmorehvn/torch_ACVNet.git
+[submodule "torch/torch_Shunted-Transformer"]
+	path = torch/torch_Shunted-Transformer
+	url = https://github.com/kimmorehvn/torch_Shunted-Transformer.git
