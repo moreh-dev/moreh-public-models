@@ -1,0 +1,3 @@
+[submodule "torch/maf_torch_dcgan"]
+	path = torch/maf_torch_dcgan
+	url = https://github.com/kimmorehvn/maf_torch_dcgan
