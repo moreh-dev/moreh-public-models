@@ -7,3 +7,6 @@
 [submodule "torch/SSD_torch"]
 	path = torch/SSD_torch
 	url = https://github.com/kimmorehvn/SSD_torch.git
+[submodule "torch/torch_GLOW"]
+	path = torch/torch_GLOW
+	url = https://github.com/kimmorehvn/torch_GLOW.git
