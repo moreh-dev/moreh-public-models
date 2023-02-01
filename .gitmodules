@@ -28,3 +28,6 @@
 [submodule "torch/ConvMAE-torch"]
 	path = torch/ConvMAE-torch
 	url = https://github.com/kimmorehvn/ConvMAE-torch.git
+[submodule "tf2/arcface-tf2"]
+	path = tf2/arcface-tf2
+	url = https://github.com/kimmorehvn/arcface-tf2.git
