@@ -25,3 +25,6 @@
 [submodule "torch/torch_Shunted-Transformer"]
 	path = torch/torch_Shunted-Transformer
 	url = https://github.com/kimmorehvn/torch_Shunted-Transformer.git
+[submodule "torch/ConvMAE-torch"]
+	path = torch/ConvMAE-torch
+	url = https://github.com/kimmorehvn/ConvMAE-torch.git
