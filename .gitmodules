@@ -1,33 +1,44 @@
 [submodule "torch/maf_torch_dcgan"]
 	path = torch/maf_torch_dcgan
+	branch = main
 	url = https://github.com/kimmorehvn/maf_torch_dcgan
 [submodule "torch/pytorch-CycleGAN-and-pix2pix"]
 	path = torch/pytorch-CycleGAN-and-pix2pix
+	branch = main
 	url = https://github.com/kimmorehvn/pytorch-CycleGAN-and-pix2pix.git
 [submodule "torch/SSD_torch"]
 	path = torch/SSD_torch
+	branch = main
 	url = https://github.com/kimmorehvn/SSD_torch.git
 [submodule "torch/torch_GLOW"]
 	path = torch/torch_GLOW
+	branch = main
 	url = https://github.com/kimmorehvn/torch_GLOW.git
 [submodule "tf2/tf2_GLOW"]
 	path = tf2/tf2_GLOW
+	branch = main
 	url = https://github.com/kimmorehvn/tf2_GLOW.git
 [submodule "torch/torch_MPL"]
 	path = torch/torch_MPL
+	branch = main
 	url = https://github.com/kimmorehvn/torch_MPL.git
 [submodule "torch/torch_DLRM"]
 	path = torch/torch_DLRM
+	branch = main
 	url = https://github.com/kimmorehvn/torch_DLRM.git
 [submodule "torch/torch_ACVNet"]
 	path = torch/torch_ACVNet
+	branch = main
 	url = https://github.com/kimmorehvn/torch_ACVNet.git
 [submodule "torch/torch_Shunted-Transformer"]
 	path = torch/torch_Shunted-Transformer
+	branch = main
 	url = https://github.com/kimmorehvn/torch_Shunted-Transformer.git
 [submodule "torch/ConvMAE-torch"]
 	path = torch/ConvMAE-torch
+	branch = main
 	url = https://github.com/kimmorehvn/ConvMAE-torch.git
 [submodule "tf2/arcface-tf2"]
 	path = tf2/arcface-tf2
+	branch = main
 	url = https://github.com/kimmorehvn/arcface-tf2.git
