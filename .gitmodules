@@ -42,3 +42,12 @@
 	path = tf2/arcface-tf2
 	branch = main
 	url = https://github.com/kimmorehvn/arcface-tf2.git
+[submodule "torch/face-alignment"]
+	path = torch/face-alignment
+	url = https://github.com/huonglarne/face-alignment
+[submodule "torch/lambda-networks"]
+	path = torch/lambda-networks
+	url = https://github.com/huonglarne/lambda-networks
+[submodule "torch/whisper"]
+	path = torch/whisper
+	url = https://github.com/huonglarne/whisper
