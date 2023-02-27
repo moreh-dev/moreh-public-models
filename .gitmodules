@@ -51,3 +51,6 @@
 [submodule "torch/whisper"]
 	path = torch/whisper
 	url = https://github.com/huonglarne/whisper
+[submodule "torch/DPT"]
+	path = torch/DPT
+	url = https://github.com/huonglarne/DPT
