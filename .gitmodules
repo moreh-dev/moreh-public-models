@@ -54,3 +54,6 @@
 [submodule "torch/DPT"]
 	path = torch/DPT
 	url = https://github.com/huonglarne/DPT
+[submodule "torch/VideoMAE"]
+	path = torch/VideoMAE
+	url = https://github.com/huonglarne/VideoMAE
