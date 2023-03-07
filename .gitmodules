@@ -57,3 +57,6 @@
 [submodule "torch/VideoMAE"]
 	path = torch/VideoMAE
 	url = https://github.com/huonglarne/VideoMAE
+[submodule "/nas/huong/projects/moreh-public-models/torch/UPerNet"]
+	path = /nas/huong/projects/moreh-public-models/torch/UPerNet
+	url = https://github.com/huonglarne/UPerNet.git
