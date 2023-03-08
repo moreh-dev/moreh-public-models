@@ -66,3 +66,6 @@
 [submodule "torch/GLPN"]
 	path = torch/GLPN
 	url = https://github.com/huonglarne/GLPN
+[submodule "torch/Gramformer"]
+	path = torch/Gramformer
+	url = https://github.com/huonglarne/Gramformer
