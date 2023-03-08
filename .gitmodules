@@ -60,6 +60,3 @@
 [submodule "/nas/huong/projects/moreh-public-models/torch/UPerNet"]
 	path = /nas/huong/projects/moreh-public-models/torch/UPerNet
 	url = https://github.com/huonglarne/UPerNet.git
-[submodule "UPerNet"]
-	path = UPerNet
-	url = https://github.com/huonglarne/UPerNet
