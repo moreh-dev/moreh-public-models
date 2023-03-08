@@ -63,3 +63,6 @@
 [submodule "torch/UPerNet"]
 	path = torch/UPerNet
 	url = https://github.com/huonglarne/UPerNet
+[submodule "torch/GLPN"]
+	path = torch/GLPN
+	url = https://github.com/huonglarne/GLPN
