@@ -69,3 +69,6 @@
 [submodule "torch/Gramformer"]
 	path = torch/Gramformer
 	url = https://github.com/huonglarne/Gramformer
+[submodule "torch/canine-hf"]
+	path = torch/canine-hf
+	url = https://github.com/huonglarne/canine-hf
